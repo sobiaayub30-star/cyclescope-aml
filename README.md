@@ -1,5 +1,7 @@
 # 🔁 CycleScope: Graph-Based Detection of Circular Money Laundering
 
+**Author: Sobia Ayub** · 2026
+
 **Can loops in the transaction graph catch money laundering that an ordinary fraud model misses?**
 
 Money launderers often move money **in a circle** — A → B → C → A — so that every single transfer
@@ -60,3 +62,9 @@ datasets, and real-time features for loops that are still open.
 
 Python · pandas · NumPy · numba · XGBoost (with built-in SHAP) · scikit-learn · Plotly · Streamlit ·
 Google Colab · Kaggle datasets: PaySim, IBM Transactions for Anti Money Laundering
+
+## License
+
+© 2026 Sobia Ayub. All rights reserved. This repository may be viewed and the app used for evaluation and
+demonstration. Copying, redistributing or presenting this work as your own is not permitted without written
+permission from the author. See `LICENSE`.

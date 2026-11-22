@@ -12,10 +12,12 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-st.set_page_config(page_title="Circular Fraud Detection", page_icon="🔁", layout="wide")
+st.set_page_config(page_title="CycleScope", page_icon="🔁", layout="wide")
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_data")
 MODELS = ["Baseline", "Hybrid (real-time)", "Hybrid (retrospective)"]
 COLORS = {"Baseline": "#5B6B82", "Hybrid (real-time)": "#2A9D8F", "Hybrid (retrospective)": "#E8A33D"}
+SHOW = {"Baseline": "Baseline", "Hybrid (real-time)": "Hybrid (real-time)",   # names shown to the user
+        "Hybrid (retrospective)": "Hybrid (looking back)"}
 FEATURE_NAMES = {   # plain-language names for the explanation chart
     "log_amount": "size of the amount", "hour_of_day": "hour of the day", "day_of_week": "day of the week",
     "is_self": "sent to its own account", "txn_type_code": "payment format", "currency_mismatch": "currency changed",
@@ -164,50 +166,64 @@ if not os.path.exists(os.path.join(DATA, "alerts.parquet")):
 alerts, cycles, explain, ctab, metrics, paired, summ = load()
 budget = int(summ["alert_budget"])
 
-st.sidebar.title("🔁 Circular Fraud Detection")
-page = st.sidebar.radio("Go to", ["Overview", "Try it yourself", "Alert queue", "Investigate a cycle", "How it works"])
+PAGES = ["Overview", "Try it yourself", "Alert queue", "Investigate a cycle", "How it works"]
+st.sidebar.title("🔁 CycleScope")
+st.sidebar.caption("Finding money laundering that moves in circles")
+page = st.sidebar.radio("Go to", PAGES, key="page")
 st.sidebar.markdown("---")
-st.sidebar.caption(f"Data: IBM AML benchmark (HI-Small), test period · {summ['test_transactions']:,} transactions · "
-                   f"alert budget {budget:,} per model. IBM's data is synthetic (AMLworld simulator): real bank "
-                   "data with laundering labels is not public.")
+st.sidebar.caption("Data: IBM AML benchmark (synthetic) · test period")
+st.sidebar.caption("Built by **Sobia Ayub** · © 2026 · All rights reserved")
 
 # --------------------------------------------------------------------------------------------- Overview
 if page == "Overview":
     st.title("Can loops in the transaction graph catch money laundering?")
-    st.markdown("Money launderers often move money **in a circle** — A → B → C → A — with each transfer looking "
-                "ordinary. This project finds such loops in the transaction graph and gives their scores to an "
-                "XGBoost model. Three models were compared, identical except for their features:")
-    st.markdown("- **Baseline** — ordinary features only (amount, time, account history)\n"
-                "- **Hybrid (real-time)** — + loop features known at the moment of the transfer\n"
-                "- **Hybrid (retrospective)** — + loop features found when looking back (monitoring)")
+    st.markdown("Money launderers often move money **in a circle** — A → B → C → A — and every single transfer "
+                "looks ordinary. CycleScope finds these circles and lets a model (XGBoost) judge them.")
+    st.button("🔁 Try it yourself: build transfers and watch the loops appear →", type="primary",
+              on_click=lambda: st.session_state.update(page="Try it yourself"))
+    st.markdown("Three models were compared, identical except for what they know:\n"
+                "- **Baseline** — only ordinary information: amount, time, account history\n"
+                "- **Hybrid (real-time)** — plus the loops, known at the moment of the transfer\n"
+                "- **Hybrid (looking back)** — plus the loops, found when reviewing the day's transfers afterwards")
     m = metrics[metrics["dataset"] == summ["dataset"]]
     mean = m.groupby("model")[["cycle txns caught", "cycles caught", "fraud caught", "precision"]].mean()
     c1, c2, c3, c4 = st.columns(4)
     b, r = mean.loc["Baseline"], mean.loc["Hybrid (retrospective)"]
-    c1.metric("Cycle transactions caught", f"{r['cycle txns caught']:.0%}", f"{(r['cycle txns caught'] - b['cycle txns caught']) * 100:+.0f} pts vs baseline")
+    c1.metric("Transfers of laundering circles caught", f"{r['cycle txns caught']:.0%}", f"{(r['cycle txns caught'] - b['cycle txns caught']) * 100:+.0f} pts vs baseline")
     c2.metric("Laundering cycles caught", f"{r['cycles caught']:.1f} of {int(m['cycles total'].max())}", f"{r['cycles caught'] - b['cycles caught']:+.1f} vs baseline")
-    c3.metric("Recall (all laundering)", f"{r['fraud caught']:.0%}", f"{(r['fraud caught'] - b['fraud caught']) * 100:+.1f} pts")
-    c4.metric("Precision of the alerts", f"{r['precision']:.0%}", f"{(r['precision'] - b['precision']) * 100:+.1f} pts")
-    st.caption("Retrospective hybrid vs baseline, mean over 5 seeds, at the same alert budget.")
+    c3.metric("All laundering caught (recall)", f"{r['fraud caught']:.0%}", f"{(r['fraud caught'] - b['fraud caught']) * 100:+.1f} pts")
+    c4.metric("Alerts that are real laundering (precision)", f"{r['precision']:.0%}", f"{(r['precision'] - b['precision']) * 100:+.1f} pts")
+    st.caption("Hybrid (looking back) compared with the baseline: average of 5 training runs, every model "
+               "allowed the same number of alerts.")
+    b1, b2, b3 = st.columns(3)
+    b1.success("✅ **Looking back: proven gain** — more laundering circles caught, in every training run")
+    b2.warning("⚠️ **Real time: not proven** — a circle is only visible once its last transfer happens")
+    b3.success("✅ **No loops, no false gain** — on data without circles, all models are equal")
 
     left, right = st.columns(2)
     with left:
         st.subheader("The three models")
         fig = go.Figure()
         for col, lab in [("cycle txns caught", "cycle transactions caught"), ("fraud caught", "all laundering caught")]:
-            fig.add_trace(go.Bar(name=lab, x=MODELS, y=[mean.loc[x, col] for x in MODELS],
+            fig.add_trace(go.Bar(name=lab, x=[SHOW[x] for x in MODELS], y=[mean.loc[x, col] for x in MODELS],
                                  text=[f"{mean.loc[x, col]:.0%}" for x in MODELS], textposition="outside"))
         fig.update_layout(barmode="group", yaxis_tickformat=".0%", height=380, template="plotly_white",
                           legend=dict(orientation="h", y=-0.2), margin=dict(t=20))
         st.plotly_chart(fig, width="stretch")
     with right:
-        st.subheader("Is the gain real? (paired test)")
+        st.subheader("What this means")
+        st.markdown("- With the loops, the model catches **about 3 in 4** transfers of laundering circles, "
+                    "instead of 3 in 5.\n"
+                    "- **Every second alert** is real laundering — although only **1 in 1,000** transfers is.\n"
+                    "- Best use: a **nightly review** that shows investigators the circles, not blocking "
+                    "payments the instant they happen.")
+    with st.expander("For technical readers: the paired statistical test"):
         p = paired[(paired["dataset"] == summ["dataset"])].copy()
+        p["comparison"] = p["comparison"].str.replace("retrospective", "looking back")
         st.dataframe(p[["comparison", "measure", "better on", "worse on", "sign test p", "mean gain", "95% interval", "verdict"]],
                      hide_index=True, width="stretch")
-    st.success("**Finding:** in **monitoring** (looking back), loop features catch clearly more laundering cycles — a "
-               "statistically proven gain. In **real time** the gain is small and not proven, because a loop only "
-               "becomes visible when its last transfer happens.")
+        st.caption("Per test cycle, hybrid vs baseline (averaged over 5 seeds). 'PROVEN' = sign test p < 0.05, "
+                   "95% bootstrap interval above zero, and a gain in every seed.")
 
 # ------------------------------------------------------------------------------------- Try it yourself
 elif page == "Try it yourself":
@@ -215,6 +231,8 @@ elif page == "Try it yourself":
     st.markdown("Enter some money transfers (or start from an example), then press **Find loops**. The app runs the "
                 "project's loop detector on your table, draws every loop it finds, and compares it with the "
                 "**laundering cycles of IBM's data**.")
+    st.markdown("**To make a loop:** ① the money must come back to the account it started from · "
+                "② each amount between half and double the previous one · ③ the whole circle within 4 days.")
     ex = st.selectbox("Start from", list(EXAMPLES))
     start = pd.DataFrame(EXAMPLES[ex], columns=["From", "To", "Amount (USD)", "Day", "Time (HH:MM)"])
     table = st.data_editor(start, num_rows="dynamic", key=f"editor_{ex}", hide_index=True, width="stretch",
@@ -265,8 +283,8 @@ elif page == "Try it yourself":
                         st.caption("Accounts: " + " · ".join(names.values()))
                     with right:
                         m1, m2, m3 = st.columns(3)
-                        m1.metric("Amount-CV", f"{cv:.3f}", help="0 = all amounts exactly equal")
-                        m2.metric("Time span", f"{span:.0f} h")
+                        m1.metric("How equal (CV)", f"{cv:.3f}", help="amount-CV: 0 = all amounts exactly equal")
+                        m2.metric("Closed in", f"{span:.0f} h")
                         m3.metric("Accounts", f"{len(ring)}")
                         word = "very equal" if cv < 0.05 else "fairly equal" if cv < 0.15 else "uneven"
                         st.markdown(f"- The amounts are **{word}**: more equal than **{more_equal:.0%}** of IBM's "
@@ -278,9 +296,11 @@ elif page == "Try it yourself":
                         fig.add_trace(go.Scatter(x=[span], y=[cv], mode="markers", name="your loop",
                                                  marker=dict(size=18, color="#D1495B", symbol="star")))
                         fig.update_layout(height=300, template="plotly_white", margin=dict(t=10, b=10, l=10, r=10),
-                                          xaxis_title="time span (hours)", yaxis_title="amount-CV",
+                                          xaxis_title="closed in (hours)", yaxis_title="how equal the amounts are (CV)",
                                           legend=dict(orientation="h", y=-0.3))
                         st.plotly_chart(fig, width="stretch", key=f"cmp_{k}")
+                        st.caption("Grey dots = real laundering circles from IBM's data. Your loop = the red star. "
+                                   "Lower = more equal amounts.")
             st.info("This shows **what the loop detector sees**. It is not a fraud verdict: the full model also uses "
                     "each account's history (thousands of earlier transfers), which a short table cannot provide. "
                     "Loops also happen in honest business — the scores show how *much* a loop looks like laundering.")
@@ -288,8 +308,11 @@ elif page == "Try it yourself":
 # ------------------------------------------------------------------------------------------ Alert queue
 elif page == "Alert queue":
     st.title("Alert queue")
-    model = st.selectbox("Rank the alerts by", MODELS, index=2)
-    only_cyc = st.checkbox("Show only transactions that belong to a laundering cycle", value=False)
+    st.markdown("The transfers a model finds most suspicious — what an investigator would check first.")
+    model = st.selectbox("Rank the alerts by", MODELS, index=2, format_func=lambda m: SHOW[m])
+    c_a, c_b = st.columns(2)
+    only_cyc = c_a.checkbox("Only transfers that belong to a laundering circle", value=False)
+    more = c_b.checkbox("Show more columns", value=False)
     q = alerts[alerts[f"rank: {model}"] <= budget].sort_values(f"rank: {model}")
     if only_cyc:
         q = q[q["pattern_type"] == "CYCLE"]
@@ -298,11 +321,15 @@ elif page == "Alert queue":
     c2.metric("Really laundering", f"{int(q['IsFraud'].sum()):,}")
     c3.metric("Part of a cycle", f"{int((q['pattern_type'] == 'CYCLE').sum()):,}")
     show = pd.DataFrame({
-        "rank": q[f"rank: {model}"], "transaction": q["txn_id"], "amount (USD)": q["Amount"].round(2),
-        "when": q["TimeHours"].map(when), "format": q["txn_type"],
-        "truth": np.where(q["IsFraud"] == 1, np.where(q["pattern_type"] == "CYCLE", "laundering (cycle)", "laundering"), "normal"),
-        "in a loop": np.where(q["retro_loops"] > 0, "yes", "no"),
-        **{f"rank by {m.lower()}": q[f"rank: {m}"] for m in MODELS if m != model}})
+        "rank": q[f"rank: {model}"], "amount (USD)": q["Amount"].round(2), "when": q["TimeHours"].map(when),
+        "truth": np.where(q["IsFraud"] == 1, np.where(q["pattern_type"] == "CYCLE", "laundering (circle)", "laundering"), "normal"),
+        "in a loop": np.where(q["retro_loops"] > 0, "yes", "no")})
+    if more:
+        show.insert(1, "transaction", q["txn_id"])
+        show["payment format"] = q["txn_type"]
+        for m in MODELS:
+            if m != model:
+                show[f"rank by {SHOW[m].lower()}"] = q[f"rank: {m}"]
     st.dataframe(show.head(500), hide_index=True, width="stretch")
     st.caption(f"Showing up to 500 of the {len(q):,} alerts. Rank 1 = the most suspicious of all "
                f"{summ['test_transactions']:,} test transactions.")
@@ -310,21 +337,23 @@ elif page == "Alert queue":
 # ---------------------------------------------------------------------------------- Investigate a cycle
 elif page == "Investigate a cycle":
     st.title("Investigate a laundering cycle")
+    st.markdown("Pick a cycle to see how the money moved, how each model ranked it, and why the model flagged a transfer.")
     caught = {m: ctab[f"caught: {m}"] for m in MODELS}
     def label(pid):
         r = ctab.loc[pid]
         who = ", ".join(n for n, s in [("baseline", caught["Baseline"][pid]), ("real-time", caught["Hybrid (real-time)"][pid]),
-                                       ("retrospective", caught["Hybrid (retrospective)"][pid])] if s) or "no model"
+                                       ("looking back", caught["Hybrid (retrospective)"][pid])] if s) or "no model"
         return f"cycle {pid} · {int(r['hops'])} hops · caught by: {who}"
     order = ctab.sort_values(["hops", "rank: Hybrid (retrospective)"], ascending=[False, True]).index
     pid = st.selectbox("Choose a test cycle", order, format_func=label)
     ring = money_order(cycles[cycles["pattern_id"] == pid])
     r = ctab.loc[pid]
-    st.markdown(f"**{int(r['hops'])} accounts, closed in {r['span_hours']:.0f} hours, amount-CV {r['amount_cv']:.3f}** "
-                "(0 = all amounts equal).")
+    eq = "very equal" if r["amount_cv"] < 0.05 else "fairly equal" if r["amount_cv"] < 0.15 else "uneven"
+    st.markdown(f"**{int(r['hops'])} accounts · closed in {r['span_hours']:.0f} hours · amounts {eq} "
+                f"(amount-CV {r['amount_cv']:.3f}, where 0 = exactly equal)**")
     cols = st.columns(3)
     for col, m in zip(cols, MODELS):
-        col.metric(m, f"rank {int(r[f'rank: {m}']):,}", "caught" if r[f"caught: {m}"] else "missed",
+        col.metric(SHOW[m], f"rank {int(r[f'rank: {m}']):,}", "caught" if r[f"caught: {m}"] else "missed",
                    delta_color="normal" if r[f"caught: {m}"] else "inverse")
     if ring is None:
         st.warning("This cycle visits an account twice, so it cannot be drawn as one circle.")
@@ -342,7 +371,7 @@ elif page == "Investigate a cycle":
             hop_info = ring[ring["txn_id"] == hop_txn].iloc[0]
             st.markdown(f"**Hop {hop_no}:** ${hop_info['Amount']:,.0f} on {when(hop_info['TimeHours'])}")
             if len(row):
-                st.markdown("Why the **retrospective hybrid** model scored it the way it did:")
+                st.markdown("Why the **looking-back model** found it suspicious (top reasons):")
                 st.plotly_chart(explain_chart(row.iloc[0]), width="stretch")
                 st.caption("Red bars push the score towards 'laundering', green towards 'normal'. "
                            "Features starting with LOOP come from the loop detector.")
@@ -366,9 +395,10 @@ else:
    amounts are), *time span* and *length*. It found 84% of IBM's test laundering cycles.
 3. **No peeking.** The earlier 70% of the data is used to learn, the later 30% only to judge; every feature uses
    only information available at its time, and this is proven by tests.
-4. **Models.** Three XGBoost models, identical except for their features, each trained with 5 seeds and compared
+4. **Models.** Three XGBoost models (baseline, real-time, looking back), identical except for their features, each trained with 5 seeds and compared
    at the same number of alerts, with a paired statistical test over the cycles.
 5. **Result.** Looking back (monitoring), loop features catch clearly more laundering cycles — a proven gain.
    In real time the gain is small and not proven.
 """)
     st.info("This app only reads a small, pre-computed data bundle; all heavy work happens in the project notebook.")
+    st.caption("CycleScope was designed and built by **Sobia Ayub** (2026). © 2026 Sobia Ayub — all rights reserved.")
