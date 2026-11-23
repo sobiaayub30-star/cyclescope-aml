@@ -219,11 +219,20 @@ if page == "Overview":
                     "payments the instant they happen.")
     with st.expander("For technical readers: the paired statistical test"):
         p = paired[(paired["dataset"] == summ["dataset"])].copy()
+        # each model's own result (mean over the seeds) next to the difference, so the gain can be checked
+        fmt = lambda measure, v: f"{v:.0%}" if measure == "cycle txns caught" else f"{v:.1f} of {int(m['cycles total'].max())}"
+        hyb = p["comparison"].str.split(" vs ").str[0]
+        p["Baseline"] = [fmt(ms, mean.loc["Baseline", ms]) for ms in p["measure"]]
+        p["Hybrid"] = [fmt(ms, mean.loc[h, ms]) for h, ms in zip(hyb, p["measure"])]
         p["comparison"] = p["comparison"].str.replace("retrospective", "looking back")
-        st.dataframe(p[["comparison", "measure", "better on", "worse on", "sign test p", "mean gain", "95% interval", "verdict"]],
-                     hide_index=True, width="stretch")
-        st.caption("Per test cycle, hybrid vs baseline (averaged over 5 seeds). 'PROVEN' = sign test p < 0.05, "
-                   "95% bootstrap interval above zero, and a gain in every seed.")
+        p = p.rename(columns={"mean gain": "mean gain per cycle"})
+        st.dataframe(p[["comparison", "measure", "Baseline", "Hybrid", "mean gain per cycle", "better on", "worse on",
+                        "sign test p", "95% interval", "verdict"]], hide_index=True, width="stretch")
+        st.caption("Baseline and Hybrid = each model's result on the 32 test cycles (mean of 5 seeds). The other columns "
+                   "compare the two cycle by cycle: 'better on' / 'worse on' count the cycles where the hybrid caught more / "
+                   "less. 'Mean gain per cycle' gives every cycle the same weight, so for transfers it can differ from "
+                   "Hybrid minus Baseline, where large cycles count more. 'PROVEN' = sign test p < 0.05, 95% interval "
+                   "above zero, and a gain in every seed.")
 
 # ------------------------------------------------------------------------------------- Try it yourself
 elif page == "Try it yourself":
